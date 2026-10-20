@@ -17,9 +17,7 @@ role, name, states and place. The browser's own accessibility then gives
 the app to screen readers (NVDA, JAWS, Narrator, VoiceOver, TalkBack,
 Orca) like any web page.
 
-> **Status: early.** It works, and it has been checked through a
-> browser's own accessibility tree (below), but not yet with every
-> screen reader, and some things are missing (see
+> **Status: early.** Some things are missing (see
 > [What it doesn't do yet](#what-it-doesnt-do-yet)). It isn't on
 > crates.io yet; its names may change. Reports, above all from screen
 > reader users, are very welcome.
@@ -142,12 +140,6 @@ The two crates:
 
 Honestly, so you know before you rely on it:
 
-- **Real screen readers in a browser are the next test.** So far it has
-  been checked through the browser's own accessibility tree (headless
-  Edge driven through the DevTools protocol, which is what screen readers
-  read): roles, names, states, focus, keyboard, a screen reader's click,
-  live messages. Not yet systematically with NVDA, JAWS, VoiceOver or
-  TalkBack, nor in Firefox or Safari.
 - **While an input method composes** (Chinese, Japanese, Korean, some
   accents), the word being composed shows in the field's element only;
   egui gets it, and shows it, once it is chosen.
@@ -157,8 +149,6 @@ Honestly, so you know before you rely on it:
 - **Tab stays in the app**, wrapping from the last widget to the first,
   as it does in eframe on the canvas. The browser's own keys (F6, Ctrl+L)
   leave it.
-- **Touch screen readers** (VoiceOver on iOS, TalkBack) get elements where
-  the widgets are, but haven't been tried.
 - **One canvas, one viewport**, as eframe has on the web; a page with
   several apps gives each its own plugin. It relies on one detail of
   eframe's: its hidden text input is the canvas's next sibling (if a
