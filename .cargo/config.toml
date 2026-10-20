@@ -1,0 +1,3 @@
+[alias]
+# `cargo xtask web`: the demo built for a browser, in dist/.
+xtask = "run -q -p xtask --"

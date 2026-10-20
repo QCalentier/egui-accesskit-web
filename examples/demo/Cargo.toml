@@ -1,0 +1,21 @@
+[package]
+name = "demo"
+description = "egui's widgets in a browser, read by screen readers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+egui.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+eframe.workspace = true
+egui_accesskit_web.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = ["console", "Document", "HtmlCanvasElement", "Window"] }
+
+[lints.rust]
+unsafe_code = "forbid"

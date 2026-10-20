@@ -1,0 +1,14 @@
+[package]
+name = "xtask"
+description = "The repository's tasks: `cargo xtask web` builds the demo for a browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+wasm-bindgen-cli-support.workspace = true
+
+[lints]
+workspace = true

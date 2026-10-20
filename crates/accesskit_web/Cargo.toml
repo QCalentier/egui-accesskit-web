@@ -1,0 +1,32 @@
+[package]
+name = "accesskit_web"
+description = "An AccessKit adapter for the web: a canvas toolkit's accessibility tree as elements screen readers read"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["accessibility", "accesskit", "a11y", "web", "wasm"]
+categories = ["accessibility", "gui", "wasm"]
+
+[dependencies]
+accesskit.workspace = true
+accesskit_consumer.workspace = true
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = [
+    "CssStyleDeclaration",
+    "Document",
+    "DomRect",
+    "Element",
+    "Event",
+    "EventTarget",
+    "FocusOptions",
+    "HtmlCollection",
+    "HtmlElement",
+    "HtmlHeadElement",
+    "Node",
+    "Window",
+] }
+
+[lints]
+workspace = true

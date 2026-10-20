@@ -1,0 +1,39 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "examples/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/QCalentier/egui-accesskit-web"
+
+[workspace.dependencies]
+accesskit = "0.24"
+accesskit_consumer = "0.38"
+accesskit_web = { path = "crates/accesskit_web" }
+egui = { version = "0.36", default-features = false }
+egui_accesskit_web = { path = "crates/egui_accesskit_web" }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow"] }
+log = "0.4"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3"
+# The demo's page glue, as the `wasm-bindgen` CLI makes it: exactly the
+# version of `wasm-bindgen` in Cargo.lock (the two must match).
+wasm-bindgen-cli-support = "=0.2.129"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# The demo in a browser: small and fast to load.
+[profile.web]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
