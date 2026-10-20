@@ -33,7 +33,14 @@ impl Default for Demo {
 
 impl Demo {
     fn ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("egui, read aloud");
+        // egui draws a heading as big text; this says it is one, so a
+        // screen reader can jump to it (H in browse mode).
+        let title = ui.heading("egui, read aloud");
+        ui.ctx().accesskit_node_builder(title.id, |node| {
+            node.set_role(egui::accesskit::Role::Heading);
+            node.set_level(1);
+            node.set_label("egui, read aloud");
+        });
         ui.label(
             "Every widget here is egui's own; a screen reader reads it as a page \
              (Tab moves between controls, Space and Enter press them).",

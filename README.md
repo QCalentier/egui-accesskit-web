@@ -1,39 +1,27 @@
 # egui-accesskit-web
 
-Screen readers for [egui](https://github.com/emilk/egui) apps in a browser.
+Screen readers for [egui](https://github.com/emilk/egui) apps in the
+browser.
 
-An eframe app on the web draws on a `<canvas>`. To a screen reader, that
-is an empty picture: nothing to read, nothing to press. egui already
-knows what each widget is: it builds an [AccessKit](https://accesskit.dev)
-tree of every frame (each widget's role, name, value and states). On the
-desktop, AccessKit's adapters hand that tree to Windows, macOS and Linux.
-On the web, eframe leaves it unused, and AccessKit has no adapter for
-browsers.
+egui describes every widget it draws through [AccessKit](https://accesskit.dev):
+its role, name, value and state. On the desktop, AccessKit hands that to
+the system's screen reader. This crate does the same on the web: it lays
+invisible elements over your app's canvas, one per widget, so screen
+readers read and use your eframe app like any web page. One line to add,
+and nothing changes on screen.
 
-This repository is that adapter, and an egui plugin wiring it into any
-eframe web app in one line. It mirrors the tree into elements laid over
-the canvas, invisible but present: one element per widget, with its ARIA
-role, name, states and place. The browser's own accessibility then gives
-the app to screen readers like any web page.
+## Quick start
 
-> **Status: early.** Some things are missing (see
-> [What it doesn't do yet](#what-it-doesnt-do-yet)). It isn't on
-> crates.io yet; its names may change. If something doesn't work for
-> you, please [open an issue](https://github.com/QCalentier/egui-accesskit-web/issues) (see
-> [Found a problem?](#found-a-problem)): we take care of every one.
-
-## Use it in an eframe app
-
-Add the plugin for the web build only:
+Add the plugin to your web build:
 
 ```toml
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 egui_accesskit_web = { git = "https://github.com/QCalentier/egui-accesskit-web" }
 ```
 
-and add two lines to eframe's usual web start (as in
-[eframe_template](https://github.com/emilk/eframe_template)): make the
-plugin with the canvas eframe draws on, and add it to egui's context:
+and add it to egui's context when the app starts, with the canvas eframe
+draws on (two lines in eframe's usual web start, as in
+[eframe_template](https://github.com/emilk/eframe_template)):
 
 ```rust
 wasm_bindgen_futures::spawn_local(async {
@@ -53,129 +41,82 @@ wasm_bindgen_futures::spawn_local(async {
             }),
         )
         .await;
-    // ... as before: say if it didn't start
+    // ... as before
 });
 ```
 
-That's all: the plugin turns AccessKit on and does the rest. Nothing
-changes on screen, nor for mouse users.
+That's it. Works with egui and eframe 0.36, Rust 1.95 or later.
 
-**Needs** egui and eframe 0.36 (AccessKit 0.24), Rust 1.95 or later.
-Either renderer (glow or wgpu): the plugin doesn't draw.
+## What your users get
 
-## What a screen reader gets
-
-- **Every widget egui describes**, with its role and name: buttons,
-  checkboxes, radio buttons, sliders (with their value and range), combo
-  boxes (with the option chosen), text fields (named by their label),
-  links, images with their alternative text (`Image::alt_text`). Text is
-  readable in the screen reader's browse mode, in order.
-- **Text fields as real ones**: a screen reader reads a field's text, and
-  its caret and selection as they move, as in any web form; typing works
-  in it, input methods too.
-- **States**: checked, selected, expanded, disabled, read-only, busy, a
-  heading's level, a value's text.
-- **Structure**, when the app describes it: headings, landmarks (main,
-  navigation, banner, regions), lists, tabs, trees, dialogs (modal).
-- **Messages**: a node marked live (a status, an alert) is said when it
-  appears or changes, politely or at once; a log (a chat) says its new
-  lines.
-- **Focus, both ways**: Tab, Shift+Tab and the arrows move egui's focus,
-  and the screen reader follows it; a screen reader moving to a widget
+- **Every widget, named**: buttons, checkboxes, radio buttons, sliders
+  with their value, combo boxes with their choice, links, images with
+  their alternative text (`Image::alt_text`), text fields with their
+  label. Text reads in order, in the screen reader's browse mode.
+- **Text fields like any web form**: the screen reader reads the text,
+  follows the caret and the selection, and typing works, input methods
+  included.
+- **The keyboard**: Tab, Shift+Tab and the arrows move through the app,
+  and the screen reader follows; moving the screen reader to a widget
   focuses it, and activating it clicks it.
-- **The page's language** (`<html lang>`), when the app gives AccessKit's
-  root node one.
+- **Structure**: headings, landmarks (main, navigation, banner,
+  regions), lists, tabs, trees and dialogs, as your app describes them.
+- **Messages**: statuses and alerts are spoken when they appear; a chat
+  log reads its new lines.
+- **The page's language** (`<html lang>`), from AccessKit's root node.
 
-egui's own widgets say what egui says about them; an app (or a library
-of widgets on egui) can say more through egui's AccessKit hooks
-(`Response::widget_info`, `Context::accesskit_node_builder`). The
-screen reader reads whatever the tree holds.
+## Make your app say more
 
-## How it works
+egui's widgets describe themselves. Your own widgets, and the structure
+of your app, can say more through egui's AccessKit hooks
+(`Response::widget_info`, `Context::accesskit_node_builder`). For
+example, a title screen readers can jump to:
 
-- **The tree in.** Each frame, the plugin takes the tree update egui built
-  and gives it to the adapter. The adapter keeps a mirror of the tree
-  with AccessKit's own consumer (the crate AccessKit's other adapters
-  use), which says which nodes were added, changed or removed: only their
-  elements are touched.
-- **Elements out.** Each node is a `<div>` with its ARIA role (most of
-  AccessKit's roles are ARIA's), its name as its text (text, buttons,
-  headings) or its `aria-label`, its states as `aria-*` attributes, its
-  description, and its place: positioned over the widget it stands for,
-  so a screen reader's highlight lands on the widget. They are
-  transparent and let the pointer through, so nothing changes on screen.
-- **Messages** go through two live regions the adapter keeps (polite and
-  assertive), which works for a message that has just appeared, unlike
-  a live region added with it.
-- **Focus.** egui keeps its own focus; the page's focus follows it onto the
-  focused widget's element, so the screen reader says what was reached.
-  It follows from the adapter's elements, from nowhere, and from the
-  canvas (or eframe's text input) after a key, never after a pointer
-  press: a mouse user's focus stays on the canvas, where eframe expects
-  it.
-- **Keys.** eframe only listens to its canvas, so while one of the
-  adapter's elements has the focus, the plugin hands its keys to egui
-  itself, and keeps from the browser the keys egui uses there (Tab, the
-  arrows, Space), as eframe does, never the browser's own shortcuts.
-- **Text fields.** A field's element is a real `<input>` (or `<textarea>`)
-  holding the field's text, caret and selection. The browser types in it
-  (input methods included), and each edit goes back to egui as AccessKit's text selection and a replacement
-  (which the plugin turns into egui's typing); the keys moving the caret
-  or deleting go to egui, and the element follows its caret. A mouse
-  user typing in a field types through eframe's own hidden `<input>`, as
-  before; it is named after the field, and hidden from screen readers
-  when it doesn't have the focus.
+```rust
+let title = ui.heading("Settings");
+ui.ctx().accesskit_node_builder(title.id, |node| {
+    node.set_role(egui::accesskit::Role::Heading);
+    node.set_level(1);
+    node.set_label("Settings");
+});
+```
 
-The two crates:
+Whatever your app puts in the tree, screen readers get.
 
-| Crate | What it is |
-|---|---|
-| [`accesskit_web`](crates/accesskit_web) | The adapter: an AccessKit tree in, elements out, a screen reader's actions back as AccessKit's action requests. No egui in it: any toolkit drawing on a canvas with AccessKit can use it (`Adapter::new(canvas, on_action)`, then `update(tree_update)` each frame; keys pressed on its elements reach `Adapter::container()`). |
-| [`egui_accesskit_web`](crates/egui_accesskit_web) | The egui plugin (`AccessKitWeb`), wiring the adapter into eframe. |
-
-## What it doesn't do yet
-
-Honestly, so you know before you rely on it:
-
-- **While an input method composes** (Chinese, Japanese, Korean, some
-  accents), the word being composed shows in the field's element only;
-  egui gets it, and shows it, once it is chosen.
-- **egui's own gaps.** `ui.heading()` is text to AccessKit, not a
-  heading; a collapsing header doesn't say whether it is open. These are
-  egui's to describe (or an app's, through the hooks above).
-- **Tab stays in the app**, wrapping from the last widget to the first,
-  as it does in eframe on the canvas. The browser's own keys (F6, Ctrl+L)
-  leave it.
-- **One canvas, one viewport**, as eframe has on the web; a page with
-  several apps gives each its own plugin. It relies on one detail of
-  eframe's: its hidden text input is the canvas's next sibling (if a
-  future eframe moves it, fields lose their name, nothing else).
-- **A canvas in a scrolling page** has its elements placed again at each
-  egui frame; between frames, they can lag a scroll. A canvas filling its
-  page (the usual eframe setup) doesn't move.
-- **Versions** follow egui's: each egui release that changes AccessKit's
-  version needs a release of this.
-
-What it costs: about 0.3 ms a frame for a page of 40 to 120 widgets
-(measured in headless Edge, rendering in software), and 0.2 MB of
-WebAssembly.
-
-## Try it
+## Try the demo
 
 ```sh
 cargo xtask web                                  # the demo built for a browser, in dist/
 python -m http.server 8765 --directory dist      # then open http://localhost:8765
 ```
 
-The demo is egui's own widgets: a button, a checkbox, a slider, radio
-buttons, a combo box, a text field, a collapsing section. Turn a screen
-reader on (NVDA is free on Windows; Narrator, VoiceOver and Orca come with
-their systems) and press Tab. `cargo xtask web` needs nothing installed
-but the `wasm32-unknown-unknown` target (`rustup target add
-wasm32-unknown-unknown`).
+The demo is a page of egui's own widgets. Turn a screen reader on (NVDA
+is free on Windows; Narrator, VoiceOver and Orca come with their systems)
+and press Tab. `cargo xtask web` needs only the `wasm32-unknown-unknown`
+target (`rustup target add wasm32-unknown-unknown`).
 
-`cargo test --workspace` tests the mirror without a browser, on a DOM in
-memory.
+## How it works
+
+Each frame, the plugin hands the tree egui built to the adapter, which
+keeps a mirror of it with AccessKit's own consumer and touches only what
+changed: about 0.3 ms a frame for a page of a hundred widgets. Each
+widget becomes an element with its ARIA role, name and state, placed
+over the widget and transparent to the pointer. The page's focus follows
+egui's, and keys pressed there reach egui; a text field is a real
+`<input>`, kept in step with egui's text and caret.
+
+| Crate | What it is |
+|---|---|
+| [`egui_accesskit_web`](crates/egui_accesskit_web) | The egui plugin (`AccessKitWeb`): the one you add. |
+| [`accesskit_web`](crates/accesskit_web) | The adapter itself, with no egui in it: any toolkit drawing on a canvas with AccessKit can use it. |
+
+## Good to know
+
+- A word being composed with an input method (Chinese, Japanese, Korean)
+  appears in the app once it is chosen.
+- Tab goes round the app, from the last widget back to the first, as in
+  eframe; the browser's own keys (F6, Ctrl+L) leave it.
+- One plugin per canvas. Versions follow egui's: egui 0.36 today.
 
 ## Found a problem?
 
