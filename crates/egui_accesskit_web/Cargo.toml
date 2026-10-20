@@ -10,6 +10,7 @@ keywords = ["egui", "accessibility", "accesskit", "a11y", "web"]
 categories = ["accessibility", "gui", "wasm"]
 
 [dependencies]
+accesskit.workspace = true
 accesskit_web.workspace = true
 egui.workspace = true
 log.workspace = true
@@ -20,6 +21,7 @@ web-sys = { workspace = true, features = [
     "HtmlCanvasElement",
     "HtmlElement",
     "HtmlInputElement",
+    "HtmlTextAreaElement",
     "KeyboardEvent",
 ] }
 

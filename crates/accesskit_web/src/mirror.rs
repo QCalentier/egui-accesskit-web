@@ -4,11 +4,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use accesskit::{Action, NodeId as LocalNodeId, TreeId, TreeUpdate};
+use accesskit::{Action, ActionData, ActionRequest, NodeId as LocalNodeId, TreeId, TreeUpdate};
 use accesskit_consumer::{Node, NodeId, Tree, TreeChangeHandler};
 
-use crate::dom::Dom;
-use crate::element::{Element, describe};
+use crate::dom::{Dom, Tag};
+use crate::element::{self, Element, describe};
 use crate::role;
 
 /// The elements standing for a tree's nodes, kept in step with it.
@@ -27,8 +27,20 @@ pub(crate) struct Mirror<D: Dom> {
 /// A node's element, as it was last told to be.
 struct Shown<E> {
     element: E,
+    tag: Tag,
     described: Element,
     children: Vec<NodeId>,
+}
+
+/// The focused field, as the toolkit has it: its element, its text, and
+/// its selection's ends (in UTF-16 code units, as a browser counts).
+#[derive(Debug)]
+pub(crate) struct FieldState<E> {
+    pub key: u128,
+    pub element: E,
+    pub text: String,
+    pub anchor: usize,
+    pub focus: usize,
 }
 
 /// Where the focus should go after an update.
@@ -110,12 +122,14 @@ impl<D: Dom> Mirror<D> {
         }
         for id in &changes.added {
             let key = u128::from(*id);
-            let element = self.dom.create(key);
+            let tag = state.node_by_id(*id).map_or(Tag::Div, |n| element::tag(&n));
+            let element = self.dom.create(key, tag);
             self.keys.insert(key, *id);
             self.shown.insert(
                 *id,
                 Shown {
                     element,
+                    tag,
                     described: Element::default(),
                     children: Vec::new(),
                 },
@@ -132,6 +146,20 @@ impl<D: Dom> Mirror<D> {
             dirty = self.shown.keys().copied().collect();
         }
         let mut seen: HashSet<NodeId> = dirty.iter().copied().collect();
+        // A field's text is in nodes under it (text runs): when they
+        // change, the field's element does.
+        for at in 0..dirty.len() {
+            let mut ancestor = state.node_by_id(dirty[at]).and_then(|n| n.parent());
+            while let Some(node) = ancestor {
+                if self.shown.get(&node.id()).is_some_and(|s| s.tag.is_field()) {
+                    if seen.insert(node.id()) {
+                        dirty.push(node.id());
+                    }
+                    break;
+                }
+                ancestor = node.parent();
+            }
+        }
         let mut said = Vec::new();
         let mut next = 0;
         while next < dirty.len() {
@@ -141,6 +169,18 @@ impl<D: Dom> Mirror<D> {
                 continue;
             };
             let described = describe(&node, scale);
+            if described.tag != shown.tag {
+                // A field that stopped being one, or the other way: a new
+                // element of its kind, where the old one was.
+                let element = self.dom.create(u128::from(id), described.tag);
+                self.dom.replace(&shown.element, &element);
+                *shown = Shown {
+                    element,
+                    tag: described.tag,
+                    described: Element::default(),
+                    children: Vec::new(),
+                };
+            }
             let corner = |e: &Element| e.absolute.map(|r| (r.x0, r.y0));
             if corner(&described) != corner(&shown.described) {
                 for child in node.child_ids() {
@@ -162,7 +202,14 @@ impl<D: Dom> Mirror<D> {
             let Some(node) = state.node_by_id(*id) else {
                 continue;
             };
-            let children: Vec<NodeId> = node.child_ids().collect();
+            // A field holds its text, not elements: its text runs aren't
+            // shown.
+            let field = self.shown.get(id).is_some_and(|s| s.tag.is_field());
+            let children: Vec<NodeId> = if field {
+                Vec::new()
+            } else {
+                node.child_ids().collect()
+            };
             if self.shown.get(id).is_some_and(|s| s.children == children) {
                 continue;
             }
@@ -223,6 +270,74 @@ impl<D: Dom> Mirror<D> {
         let focus = self.focus.filter(|id| Some(*id) != self.root)?;
         let node = self.tree.as_ref()?.state().node_by_id(focus)?;
         role::typed_in(node.role()).then(|| node.label().unwrap_or_default())
+    }
+
+    /// The focused node, when it is a field one types in: its element,
+    /// text and selection.
+    pub(crate) fn focused_field_state(&self) -> Option<FieldState<D::Element>> {
+        self.field_state(self.focus.filter(|id| Some(*id) != self.root)?)
+    }
+
+    /// The field `key` names, as the toolkit has it, focused or not.
+    pub(crate) fn field_state_of(&self, key: u128) -> Option<FieldState<D::Element>> {
+        self.field_state(*self.keys.get(&key)?)
+    }
+
+    fn field_state(&self, id: NodeId) -> Option<FieldState<D::Element>> {
+        let shown = self.shown.get(&id).filter(|s| s.tag.is_field())?;
+        let node = self.tree.as_ref()?.state().node_by_id(id)?;
+        let text = element::field_text(&node);
+        let end = text.encode_utf16().count();
+        let (anchor, focus) = match (node.text_selection_anchor(), node.text_selection_focus()) {
+            (Some(anchor), Some(focus)) => (
+                anchor.to_global_utf16_index(),
+                focus.to_global_utf16_index(),
+            ),
+            _ => (end, end),
+        };
+        Some(FieldState {
+            key: u128::from(id),
+            element: shown.element.clone(),
+            text,
+            anchor,
+            focus,
+        })
+    }
+
+    /// The request selecting `start..end` (UTF-16 code units) of the text
+    /// of the field `key` names.
+    pub(crate) fn select(&self, key: u128, start: usize, end: usize) -> Option<ActionRequest> {
+        let node = self
+            .tree
+            .as_ref()?
+            .state()
+            .node_by_id(*self.keys.get(&key)?)?;
+        if !node.supports_text_ranges() {
+            return None;
+        }
+        let mut range = node
+            .text_position_from_global_utf16_index(start.min(end))?
+            .to_degenerate_range();
+        range.set_end(node.text_position_from_global_utf16_index(start.max(end))?);
+        let (target_node, target_tree) = node.locate();
+        Some(ActionRequest {
+            action: Action::SetTextSelection,
+            target_tree,
+            target_node,
+            data: Some(ActionData::SetTextSelection(range.to_text_selection())),
+        })
+    }
+
+    /// The request replacing the selected text of the field `key` names
+    /// with `text` (deleting it, if empty).
+    pub(crate) fn replace_selection(&self, key: u128, text: &str) -> Option<ActionRequest> {
+        let (target_node, target_tree) = self.target(key)?;
+        Some(ActionRequest {
+            action: Action::ReplaceSelectedText,
+            target_tree,
+            target_node,
+            data: Some(ActionData::Value(text.into())),
+        })
     }
 
     /// The element of the focused node, unless the root has the focus.
@@ -287,6 +402,9 @@ fn apply<D: Dom>(dom: &mut D, element: &D::Element, old: &Element, new: &Element
     if old.text != new.text {
         dom.set_text(element, new.text.as_deref());
     }
+    if old.value != new.value {
+        dom.set_value(element, new.value.as_deref().unwrap_or_default());
+    }
     if old.bounds != new.bounds {
         dom.place(element, new.bounds);
     }
@@ -313,6 +431,8 @@ mod tests {
 
     #[derive(Default, Debug)]
     struct FakeElement {
+        tag: Tag,
+        value: String,
         attributes: BTreeMap<String, String>,
         text: Option<String>,
         bounds: Option<Rect>,
@@ -322,9 +442,22 @@ mod tests {
     impl Dom for Fake {
         type Element = u128;
 
-        fn create(&mut self, key: u128) -> u128 {
-            self.elements.insert(key, FakeElement::default());
+        fn create(&mut self, key: u128, tag: Tag) -> u128 {
+            self.elements.insert(
+                key,
+                FakeElement {
+                    tag,
+                    ..FakeElement::default()
+                },
+            );
             key
+        }
+
+        fn replace(&mut self, _old: &u128, _new: &u128) {}
+
+        fn set_value(&mut self, element: &u128, value: &str) {
+            self.writes += 1;
+            self.elements.get_mut(element).unwrap().value = value.into();
         }
 
         fn set_attribute(&mut self, element: &u128, name: &str, value: &str) {
@@ -623,5 +756,63 @@ mod tests {
         assert_eq!(m.dom().attribute(1, "role"), Some("log"));
         assert_eq!(m.dom().of(1).children.len(), 2);
         assert_eq!(m.dom().of(11).text.as_deref(), Some("A dark room."));
+    }
+
+    /// A text field (1) holding "hello" in one text run (2), its caret
+    /// after "he".
+    fn field(text: &str, caret: usize) -> TreeUpdate {
+        use accesskit::{TextPosition, TextSelection};
+
+        let mut field = node(Role::TextInput);
+        field.set_label("Name");
+        field.add_action(Action::Focus);
+        field.set_children(vec![Id(2)]);
+        let at = TextPosition {
+            node: Id(2),
+            character_index: caret,
+        };
+        field.set_text_selection(TextSelection {
+            anchor: at,
+            focus: at,
+        });
+        let mut run = node(Role::TextRun);
+        run.set_value(text);
+        run.set_character_lengths(vec![1; text.len()]);
+        let mut tree = update(vec![field], 1);
+        tree.nodes.push((Id(2), run));
+        tree
+    }
+
+    #[test]
+    fn a_field_is_a_real_one_holding_its_text_and_caret() {
+        let mut m = Mirror::new(Fake::default());
+        m.update(field("hello", 2), 1.0);
+        let dom = m.dom();
+        assert_eq!(dom.of(1).tag, Tag::Input);
+        assert_eq!(dom.of(1).value, "hello");
+        assert_eq!(dom.attribute(1, "aria-label"), Some("Name"));
+        assert_eq!(dom.attribute(1, "role"), None, "an input says it itself");
+        assert!(dom.of(1).children.is_empty(), "its text runs aren't shown");
+
+        let state = m.focused_field_state().expect("the focused field");
+        assert_eq!(
+            (state.text.as_str(), state.anchor, state.focus),
+            ("hello", 2, 2)
+        );
+
+        // Selecting "ell" for the toolkit: positions in its text run.
+        let request = m.select(state.key, 1, 4).expect("a selection");
+        let Some(ActionData::SetTextSelection(selection)) = request.data else {
+            panic!("{request:?}")
+        };
+        assert_eq!(selection.anchor.character_index, 1);
+        assert_eq!(selection.focus.character_index, 4);
+        assert_eq!(request.target_node, Id(1));
+        let typed = m.replace_selection(state.key, "i").unwrap();
+        assert_eq!(typed.action, Action::ReplaceSelectedText);
+
+        // The toolkit's text changed: the field's too.
+        m.update(field("hi", 2), 1.0);
+        assert_eq!(m.dom().of(1).value, "hi");
     }
 }

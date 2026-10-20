@@ -24,6 +24,7 @@
 
 mod dom;
 mod element;
+mod field;
 mod mirror;
 mod role;
 mod web;

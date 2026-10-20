@@ -9,8 +9,9 @@ use accesskit::{Action, ActionRequest, Rect, TreeUpdate};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
-use crate::dom::Dom;
-use crate::mirror::{Focus, Mirror};
+use crate::dom::{Dom, Tag};
+use crate::field;
+use crate::mirror::{FieldState, Focus, Mirror};
 
 /// The class of every container, which the adapter's style sheet styles.
 const CLASS: &str = "accesskit-web";
@@ -30,6 +31,9 @@ const STYLE: &str = "
   font: 1px/1 sans-serif; white-space: nowrap; overflow: hidden; box-sizing: border-box;
 }
 .accesskit-web [data-placed] { position: absolute; }
+.accesskit-web input, .accesskit-web textarea {
+  font-size: 16px; resize: none; appearance: none; user-select: text;
+}
 ";
 
 /// An AccessKit adapter for a page: the tree a toolkit draws on a
@@ -41,15 +45,24 @@ const STYLE: &str = "
 /// focus: Tab and the arrows move it, and the elements follow; while one
 /// of them has the page's focus, keys go to it, so the toolkit should
 /// take them from [`container`](Self::container) (the egui glue does).
-/// A toolkit with a text input of its own (eframe's hidden `<input>`)
-/// gives it with [`set_text_input`](Self::set_text_input).
+///
+/// A field one types in is a real `<input>` (or `<textarea>`) holding the
+/// field's text and caret: the browser edits it (typing, pasting, input
+/// methods, a phone's keyboard), and each edit comes back as a
+/// `SetTextSelection` (when it wasn't at the selection) then a
+/// `ReplaceSelectedText` request; keys that move the caret or delete
+/// (arrows, Home, End, Backspace, Delete) are the toolkit's to handle, the
+/// field following its caret. A toolkit with a text input of its own
+/// (eframe's hidden `<input>`) gives it with
+/// [`set_text_input`](Self::set_text_input).
 pub struct Adapter {
     shared: Rc<Shared>,
     anchor: web_sys::Element,
     language: RefCell<Option<String>>,
-    /// The toolkit's own text input, and the name it was last given.
+    /// The toolkit's own text input, and what it last said: hidden from
+    /// screen readers or not, its name.
     text_input: Option<web_sys::HtmlElement>,
-    field: RefCell<Option<String>>,
+    said: RefCell<Option<(bool, Option<String>)>>,
     _listeners: Vec<Closure<dyn FnMut(web_sys::Event)>>,
 }
 
@@ -64,6 +77,23 @@ struct Shared {
     /// Whether the last thing done on the canvas was a key (else a pointer
     /// press): the focus then follows the toolkit's off the canvas.
     keyed: Cell<bool>,
+    /// The field being typed in, as its element was last made to show it.
+    field: RefCell<Option<FieldSync>>,
+    /// Set when the field was edited or its caret moved in the page: its
+    /// element is shown the toolkit's text again after the toolkit's next
+    /// frame (which may have refused the edit), even if unchanged.
+    touched: Cell<bool>,
+}
+
+/// A field's element, as last made to show the toolkit's field: its text
+/// and selection, in UTF-16 code units.
+struct FieldSync {
+    key: u128,
+    text: Vec<u16>,
+    start: usize,
+    end: usize,
+    /// Edited before the toolkit focused it: the edit waits for its focus.
+    waiting: bool,
 }
 
 impl Adapter {
@@ -114,13 +144,15 @@ impl Adapter {
             on_action: RefCell::new(Box::new(on_action)),
             moving: Cell::new(false),
             keyed: Cell::new(false),
+            field: RefCell::new(None),
+            touched: Cell::new(false),
         });
         let mut adapter = Self {
             shared: shared.clone(),
             anchor: canvas.clone(),
             language: RefCell::new(None),
             text_input: None,
-            field: RefCell::new(None),
+            said: RefCell::new(None),
             _listeners: Vec::new(),
         };
         adapter.listen("focusin", {
@@ -131,6 +163,18 @@ impl Adapter {
             let shared = shared.clone();
             move |event| shared.clicked(&event)
         })?;
+        for event in ["input", "compositionend"] {
+            adapter.listen(event, {
+                let shared = shared.clone();
+                move |event| shared.edited(&event)
+            })?;
+        }
+        if let Some(document) = canvas.owner_document() {
+            adapter.listen_on(&document, "selectionchange", {
+                let shared = shared.clone();
+                move |_| shared.caret_moved()
+            })?;
+        }
         adapter.listen_on(canvas, "keydown", {
             let shared = shared.clone();
             move |_| shared.keyed.set(true)
@@ -143,12 +187,9 @@ impl Adapter {
     }
 
     /// Says the toolkit types through `input`, an input of its own beside
-    /// the canvas (eframe's hidden `<input>`): when the toolkit's focus is
-    /// on a field one types in, the page's focus goes there rather than to
-    /// the field's element, so the toolkit edits as it always does (with
-    /// input methods, and a phone's keyboard); `input` is named after the
-    /// field. From it, after a key, the focus follows the toolkit's as from
-    /// the canvas.
+    /// the canvas (eframe's hidden `<input>`, where a pointer user's typing
+    /// goes): it is named after the focused field, and from it, after a
+    /// key, the focus follows the toolkit's as from the canvas.
     pub fn set_text_input(&mut self, input: &web_sys::HtmlElement) -> Result<(), JsValue> {
         self.listen_on(input, "keydown", {
             let shared = self.shared.clone();
@@ -171,24 +212,46 @@ impl Adapter {
         self.place();
         let scale = web_sys::window().map_or(1.0, |w| w.device_pixel_ratio());
         let moved = self.shared.mirror.borrow_mut().update(update, scale);
-        let field = self.shared.mirror.borrow().focused_field();
-        if let Some(input) = &self.text_input
-            && *self.field.borrow() != field
-        {
-            match &field {
-                Some(name) if !name.is_empty() => input.set_attribute("aria-label", name).ok(),
-                _ => input.remove_attribute("aria-label").ok(),
-            };
-            *self.field.borrow_mut() = field.clone();
+        if let Some(input) = &self.text_input {
+            // Where a pointer user types: named after the field while it
+            // has the focus, else hidden from screen readers (a second,
+            // empty field otherwise, beside the field's own element).
+            let hidden = !self.is_active(input);
+            let name = self
+                .shared
+                .mirror
+                .borrow()
+                .focused_field()
+                .filter(|name| !name.is_empty());
+            let said = Some((hidden, name));
+            if *self.said.borrow() != said {
+                if let Some((hidden, name)) = &said {
+                    match hidden {
+                        true => input.set_attribute("aria-hidden", "true").ok(),
+                        false => input.remove_attribute("aria-hidden").ok(),
+                    };
+                    match name {
+                        Some(name) => input.set_attribute("aria-label", name).ok(),
+                        None => input.remove_attribute("aria-label").ok(),
+                    };
+                }
+                *self.said.borrow_mut() = said;
+            }
         }
         if let Some(focus) = moved
             && self.follows_focus()
         {
-            match (focus, &self.text_input) {
-                (Focus::To(_), Some(input)) if field.is_some() => self.shared.focus(input),
-                (Focus::To(element), _) => self.shared.focus(&element),
-                (Focus::Root, _) => self.shared.focus(&self.shared.container),
+            match focus {
+                Focus::To(element) => self.shared.focus(&element),
+                Focus::Root => self.shared.focus(&self.shared.container),
             }
+        }
+        // The field being typed in shows the toolkit's text and caret.
+        let typing = self.shared.mirror.borrow().focused_field_state();
+        if let Some(state) = typing
+            && self.is_active(&state.element)
+        {
+            self.shared.show(state);
         }
         let language = self.shared.mirror.borrow().language();
         if *self.language.borrow() != language {
@@ -218,6 +281,15 @@ impl Adapter {
             .owner_document()
             .and_then(|d| d.active_element());
         active.is_some_and(|active| self.shared.container.contains(Some(&active)))
+    }
+
+    /// Whether `element` has the page's focus.
+    fn is_active(&self, element: &web_sys::HtmlElement) -> bool {
+        let active = self
+            .anchor
+            .owner_document()
+            .and_then(|d| d.active_element());
+        active.is_some_and(|active| active == *element.unchecked_ref::<web_sys::Element>())
     }
 
     /// Whether the page's focus should follow the toolkit's: it is on the
@@ -355,6 +427,169 @@ impl Shared {
         });
     }
 
+    /// Shows the toolkit's field in its element, when it differs from what
+    /// the element was last made to show (or the page touched it); or,
+    /// for a field edited before the toolkit focused it, sends the edit
+    /// now that it has.
+    fn show(&self, state: FieldState<web_sys::HtmlElement>) {
+        let waiting = self
+            .field
+            .borrow()
+            .as_ref()
+            .is_some_and(|f| f.key == state.key && f.waiting);
+        if waiting {
+            self.send_edit(state.key, state.element.unchecked_ref());
+            return;
+        }
+        let text: Vec<u16> = state.text.encode_utf16().collect();
+        let (start, end) = (state.anchor.min(state.focus), state.anchor.max(state.focus));
+        let touched = self.touched.replace(false);
+        let mut field = self.field.borrow_mut();
+        let same = field.as_ref().is_some_and(|f| {
+            f.key == state.key && f.text == text && (f.start, f.end) == (start, end)
+        });
+        if same && !touched {
+            return;
+        }
+        *field = Some(FieldSync {
+            key: state.key,
+            text,
+            start,
+            end,
+            waiting: false,
+        });
+        drop(field);
+        let element: &web_sys::Element = state.element.unchecked_ref();
+        if native(element).is_some_and(|(value, _, _)| value != state.text) {
+            set_native_value(element, &state.text);
+        }
+        let direction = if state.focus < state.anchor {
+            "backward"
+        } else {
+            "forward"
+        };
+        set_native_selection(element, start, end, direction);
+    }
+
+    /// The page edited a field's element (typing, pasting, an input
+    /// method's word, a phone keyboard's correction): the toolkit's field
+    /// gets the same edit. A field the toolkit hasn't focused yet (typed in
+    /// the moment it was reached) is focused first, and its edit sent once
+    /// it is.
+    fn edited(&self, event: &web_sys::Event) {
+        if event
+            .dyn_ref::<web_sys::InputEvent>()
+            .is_some_and(web_sys::InputEvent::is_composing)
+        {
+            // An input method is composing: its word comes when it ends.
+            return;
+        }
+        let Some(element) = event
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        else {
+            return;
+        };
+        let Some(key) = self.key(&element) else {
+            return;
+        };
+        let shown = self.field.borrow().as_ref().is_some_and(|f| f.key == key);
+        if !shown {
+            let focus = {
+                let mirror = self.mirror.borrow();
+                let Some(state) = mirror.field_state_of(key) else {
+                    return;
+                };
+                let waiting = !mirror.has_focus(key);
+                *self.field.borrow_mut() = Some(FieldSync {
+                    key,
+                    text: state.text.encode_utf16().collect(),
+                    start: state.anchor.min(state.focus),
+                    end: state.anchor.max(state.focus),
+                    waiting,
+                });
+                waiting.then(|| mirror.target(key)).flatten()
+            };
+            if let Some((node, tree)) = focus {
+                self.act(Action::Focus, node, tree);
+                return;
+            }
+        } else if self.field.borrow().as_ref().is_some_and(|f| f.waiting) {
+            // Still waiting for the toolkit's focus: the edits add up.
+            return;
+        }
+        self.send_edit(key, &element);
+    }
+
+    /// Sends the toolkit what changed in the field `key` names since its
+    /// element last showed the toolkit's field: a selection (unless the
+    /// change was at the selection) and its replacement.
+    fn send_edit(&self, key: u128, element: &web_sys::Element) {
+        let Some((value, now_start, now_end)) = native(element) else {
+            return;
+        };
+        let value: Vec<u16> = value.encode_utf16().collect();
+        let requests = {
+            let mirror = self.mirror.borrow();
+            let mut field = self.field.borrow_mut();
+            let Some(shown) = field.as_mut().filter(|f| f.key == key) else {
+                return;
+            };
+            let (start, end, inserted) = field::diff(&shown.text, &value);
+            let mut requests = Vec::new();
+            if (start, end) != (shown.start, shown.end) {
+                requests.extend(mirror.select(key, start, end));
+            }
+            if start != end || !inserted.is_empty() {
+                requests
+                    .extend(mirror.replace_selection(key, &String::from_utf16_lossy(&inserted)));
+            }
+            *shown = FieldSync {
+                key,
+                text: value,
+                start: now_start,
+                end: now_end,
+                waiting: false,
+            };
+            requests
+        };
+        self.touched.set(true);
+        for request in requests {
+            (self.on_action.borrow_mut())(request);
+        }
+    }
+
+    /// The page moved a field's caret (a screen reader's own commands, a
+    /// phone's text navigation): the toolkit's field selects the same.
+    fn caret_moved(&self) {
+        let Some(active) = self
+            .container
+            .owner_document()
+            .and_then(|d| d.active_element())
+        else {
+            return;
+        };
+        let (Some(key), Some((_, start, end))) = (self.key(&active), native(&active)) else {
+            return;
+        };
+        let request = {
+            let mut field = self.field.borrow_mut();
+            let Some(shown) = field.as_mut().filter(|f| f.key == key) else {
+                return;
+            };
+            if (shown.start, shown.end) == (start, end) {
+                return;
+            }
+            shown.start = start;
+            shown.end = end;
+            self.mirror.borrow().select(key, start, end)
+        };
+        self.touched.set(true);
+        if let Some(request) = request {
+            (self.on_action.borrow_mut())(request);
+        }
+    }
+
     /// The key of the node `element` (or its nearest ancestor among the
     /// adapter's elements) stands for.
     fn key(&self, element: &web_sys::Element) -> Option<u128> {
@@ -385,14 +620,44 @@ struct PageDom {
 impl Dom for PageDom {
     type Element = web_sys::HtmlElement;
 
-    fn create(&mut self, key: u128) -> Self::Element {
+    fn create(&mut self, key: u128, tag: Tag) -> Self::Element {
+        let name = match tag {
+            Tag::Div => "div",
+            Tag::Input | Tag::Password => "input",
+            Tag::TextArea => "textarea",
+        };
         let element: web_sys::HtmlElement = self
             .document
-            .create_element("div")
-            .expect("a div")
+            .create_element(name)
+            .expect("an element")
             .unchecked_into();
         element.set_id(&format!("{}-{key}", self.prefix));
+        if tag.is_field() {
+            if tag == Tag::Password {
+                element.set_attribute("type", "password").ok();
+            }
+            // The toolkit's field decides; the browser's helpers would
+            // only get in the way.
+            for (name, value) in [
+                ("autocomplete", "off"),
+                ("autocapitalize", "off"),
+                ("spellcheck", "false"),
+            ] {
+                element.set_attribute(name, value).ok();
+            }
+        }
         element
+    }
+
+    fn replace(&mut self, old: &Self::Element, new: &Self::Element) {
+        old.replace_with_with_node_1(new).ok();
+    }
+
+    fn set_value(&mut self, element: &Self::Element, value: &str) {
+        let element: &web_sys::Element = element.unchecked_ref();
+        if native(element).is_some_and(|(now, _, _)| now != value) {
+            set_native_value(element, value);
+        }
     }
 
     fn set_attribute(&mut self, element: &Self::Element, name: &str, value: &str) {
@@ -465,6 +730,44 @@ impl Dom for PageDom {
         }
         region.set_text_content(Some(&words));
         *said = words;
+    }
+}
+
+/// A field element's text and selection (UTF-16 code units), as the page
+/// has them; `None` for an element that isn't a field.
+fn native(element: &web_sys::Element) -> Option<(String, usize, usize)> {
+    let (value, start, end) = if let Some(input) = element.dyn_ref::<web_sys::HtmlInputElement>() {
+        (
+            input.value(),
+            input.selection_start(),
+            input.selection_end(),
+        )
+    } else {
+        let area = element.dyn_ref::<web_sys::HtmlTextAreaElement>()?;
+        (area.value(), area.selection_start(), area.selection_end())
+    };
+    let start = start.ok().flatten().unwrap_or(0) as usize;
+    let end = end.ok().flatten().map_or(start, |end| end as usize);
+    Some((value, start, end))
+}
+
+fn set_native_value(element: &web_sys::Element, value: &str) {
+    if let Some(input) = element.dyn_ref::<web_sys::HtmlInputElement>() {
+        input.set_value(value);
+    } else if let Some(area) = element.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+        area.set_value(value);
+    }
+}
+
+fn set_native_selection(element: &web_sys::Element, start: usize, end: usize, direction: &str) {
+    let (start, end) = (start as u32, end as u32);
+    if let Some(input) = element.dyn_ref::<web_sys::HtmlInputElement>() {
+        input
+            .set_selection_range_with_direction(start, end, direction)
+            .ok();
+    } else if let Some(area) = element.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+        area.set_selection_range_with_direction(start, end, direction)
+            .ok();
     }
 }
 

@@ -4,11 +4,16 @@
 use accesskit::{Action, Live, Orientation, Rect, Role, Toggled};
 use accesskit_consumer::Node;
 
+use crate::dom::Tag;
 use crate::role;
 
 /// An element as it should be, for one node.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Element {
+    /// Its kind: a field one types in is a real one.
+    pub tag: Tag,
+    /// A field's text.
+    pub value: Option<String>,
     /// `role` and `aria-*` attributes, `tabindex`, sorted by name.
     pub attributes: Vec<(&'static str, String)>,
     /// Its text: a leaf's name when its role is named by its content, the
@@ -30,11 +35,16 @@ pub(crate) struct Element {
 /// device pixels in a CSS pixel).
 pub(crate) fn describe(node: &Node, scale: f64) -> Element {
     let role = node.role();
+    let tag = tag(node);
     let leaf = node.child_ids().len() == 0;
     let mut attributes = Vec::new();
     let mut set = |name: &'static str, value: String| attributes.push((name, value));
 
-    if let Some(aria) = role::aria(role) {
+    // A field's own element says it is a field; a search field or an
+    // editable list says what it is too.
+    if let Some(aria) = role::aria(role)
+        && (!tag.is_field() || matches!(role, Role::SearchInput | Role::EditableComboBox))
+    {
         set("role", aria.to_owned());
     }
 
@@ -59,7 +69,12 @@ pub(crate) fn describe(node: &Node, scale: f64) -> Element {
         set("aria-description", description);
     }
     if let Some(placeholder) = node.placeholder() {
-        set("aria-placeholder", placeholder.to_owned());
+        let attribute = if tag.is_field() {
+            "placeholder"
+        } else {
+            "aria-placeholder"
+        };
+        set(attribute, placeholder.to_owned());
     }
     if let Some(shortcut) = node.data().keyboard_shortcut() {
         set("aria-keyshortcuts", shortcut.to_owned());
@@ -184,11 +199,32 @@ pub(crate) fn describe(node: &Node, scale: f64) -> Element {
         )
     });
     Element {
+        tag,
+        value: tag.is_field().then(|| field_text(node)),
         attributes,
         text,
         bounds,
         absolute,
         announce,
+    }
+}
+
+/// The kind of element standing for `node`.
+pub(crate) fn tag(node: &Node) -> Tag {
+    match node.role() {
+        Role::PasswordInput => Tag::Password,
+        role if role::typed_in(role) && node.is_multiline() => Tag::TextArea,
+        role if role::typed_in(role) => Tag::Input,
+        _ => Tag::Div,
+    }
+}
+
+/// The text in a field: its text runs', or its value.
+pub(crate) fn field_text(node: &Node) -> String {
+    if node.supports_text_ranges() {
+        node.document_range().text()
+    } else {
+        node.value().unwrap_or_default()
     }
 }
 

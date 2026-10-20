@@ -70,7 +70,11 @@ Either renderer (glow or wgpu): the plugin doesn't draw.
 - **Every widget egui describes**, with its role and name: buttons,
   checkboxes, radio buttons, sliders (with their value and range), combo
   boxes (with the option chosen), text fields (named by their label),
-  links, images with their alternative text (`Image::alt_text`). Text is readable in the
+  links, images with their alternative text (`Image::alt_text`).
+- **Text fields as real ones**: a screen reader reads a field's text, and
+  its caret and selection as they move (by character, word, line), as in
+  any web form; typing, pasting, input methods and a phone's keyboard
+  work in it. Text is readable in the
   screen reader's browse mode, in order.
 - **States**: checked, selected, expanded, disabled, read-only, busy, a
   heading's level, a value's text.
@@ -117,9 +121,15 @@ screen reader reads whatever the tree holds.
   adapter's elements has the focus, the plugin hands its keys to egui
   itself, and keeps from the browser the keys egui uses there (Tab, the
   arrows, Space), as eframe does, never the browser's own shortcuts.
-- **Text fields.** On a field one types in, the page's focus goes to
-  eframe's own hidden `<input>`, named after the field, so typing works
-  as it always did, with input methods and a phone's keyboard.
+- **Text fields.** A field's element is a real `<input>` (or `<textarea>`)
+  holding the field's text, caret and selection. The browser types in it
+  (typing, pasting, input methods, a phone's keyboard), and each edit
+  goes back to egui as AccessKit's text selection and a replacement
+  (which the plugin turns into egui's typing); the keys moving the caret
+  or deleting go to egui, and the element follows its caret. A mouse
+  user typing in a field types through eframe's own hidden `<input>`, as
+  before; it is named after the field, and hidden from screen readers
+  when it doesn't have the focus.
 
 The two crates:
 
@@ -138,10 +148,9 @@ Honestly, so you know before you rely on it:
   read): roles, names, states, focus, keyboard, a screen reader's click,
   live messages. Not yet systematically with NVDA, JAWS, VoiceOver or
   TalkBack, nor in Firefox or Safari.
-- **A text field's content.** Fields are named and typing works, but a
-  screen reader can't read back what is in a field, nor move a caret
-  through it: eframe's hidden input stays empty. Mirroring the field's
-  text and caret into it is next.
+- **While an input method composes** (Chinese, Japanese, Korean, some
+  accents), the word being composed shows in the field's element only;
+  egui gets it, and shows it, once it is chosen.
 - **egui's own gaps.** `ui.heading()` is text to AccessKit, not a
   heading; a collapsing header doesn't say whether it is open. These are
   egui's to describe (or an app's, through the hooks above).

@@ -531,6 +531,7 @@ dependencies = [
 name = "egui_accesskit_web"
 version = "0.1.0"
 dependencies = [
+ "accesskit",
  "accesskit_web",
  "egui",
  "log",

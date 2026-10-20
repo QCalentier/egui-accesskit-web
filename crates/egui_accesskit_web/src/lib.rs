@@ -131,10 +131,7 @@ fn start(canvas: &web_sys::Element, ctx: &Context) -> Result<Running, JsValue> {
         let queue = queue.clone();
         let ctx = ctx.clone();
         move |request| {
-            queue
-                .borrow_mut()
-                .events
-                .push(Event::AccessKitActionRequest(request));
+            queue.borrow_mut().events.extend(events_for(request));
             ctx.request_repaint();
         }
     })?;
@@ -171,11 +168,49 @@ fn start(canvas: &web_sys::Element, ctx: &Context) -> Result<Running, JsValue> {
     })
 }
 
+/// egui's events for a request of the adapter's: replacing a text field's
+/// selection (what was typed in its element) is egui's typing, which egui
+/// knows (an AccessKit request it doesn't); the rest as they are.
+fn events_for(request: accesskit::ActionRequest) -> Vec<Event> {
+    use accesskit::{Action, ActionData};
+
+    match (&request.action, &request.data) {
+        (Action::ReplaceSelectedText, Some(ActionData::Value(text))) if text.is_empty() => {
+            // Deleting the selection.
+            [true, false]
+                .map(|pressed| Event::Key {
+                    key: Key::Backspace,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                })
+                .into()
+        }
+        (Action::ReplaceSelectedText, Some(ActionData::Value(text))) => {
+            vec![Event::Text(text.to_string())]
+        }
+        _ => vec![Event::AccessKitActionRequest(request)],
+    }
+}
+
 /// Queues a key pressed (or released) on the adapter's elements as egui's
 /// events, as eframe does on its canvas; answers whether the browser
 /// should leave it alone (egui moves its own focus with Tab, and the
 /// arrows, Space and the like would scroll the page).
+///
+/// On a field's element, the browser types (its text comes back from the
+/// adapter as an edit, not from here) and egui moves the caret, deletes,
+/// selects all and undoes.
 fn key_event(event: &web_sys::KeyboardEvent, pressed: bool, queue: &mut Queue) -> bool {
+    let field = event.target().is_some_and(|t| {
+        t.is_instance_of::<web_sys::HtmlInputElement>()
+            || t.is_instance_of::<web_sys::HtmlTextAreaElement>()
+    });
+    if field && (event.is_composing() || event.key() == "Process") {
+        // An input method's: its word comes when it ends.
+        return false;
+    }
     let modifiers = Modifiers {
         alt: event.alt_key(),
         ctrl: event.ctrl_key(),
@@ -189,6 +224,7 @@ fn key_event(event: &web_sys::KeyboardEvent, pressed: bool, queue: &mut Queue) -
     }
     let name = event.key();
     if pressed
+        && !field
         && !modifiers.ctrl
         && !modifiers.command
         && let Some(text) = text_of(&name)
@@ -206,7 +242,35 @@ fn key_event(event: &web_sys::KeyboardEvent, pressed: bool, queue: &mut Queue) -
         repeat: false, // egui works it out
         modifiers,
     });
-    pressed && taken(key, modifiers)
+    pressed
+        && if field {
+            taken_in_field(key, modifiers)
+        } else {
+            taken(key, modifiers)
+        }
+}
+
+/// Whether egui takes `key` from the browser on a field's element: the
+/// keys moving the caret, deleting, selecting all and undoing, Tab, Enter;
+/// the browser keeps typing, Space, copying, cutting and pasting.
+fn taken_in_field(key: Key, modifiers: Modifiers) -> bool {
+    let moves = matches!(
+        key,
+        Key::ArrowDown
+            | Key::ArrowLeft
+            | Key::ArrowRight
+            | Key::ArrowUp
+            | Key::Home
+            | Key::End
+            | Key::PageUp
+            | Key::PageDown
+            | Key::Backspace
+            | Key::Delete
+    );
+    if modifiers.command {
+        return moves || matches!(key, Key::A | Key::Z | Key::Y);
+    }
+    moves || matches!(key, Key::Tab | Key::Enter)
 }
 
 /// The text a key with this `key` name types: a single character only
@@ -254,6 +318,45 @@ mod tests {
         assert_eq!(text_of("Enter"), None);
         assert_eq!(text_of("Dead"), None);
         assert_eq!(text_of(""), None);
+    }
+
+    #[test]
+    fn in_a_field_the_browser_types_and_egui_moves_the_caret() {
+        let none = Modifiers::NONE;
+        assert!(taken_in_field(Key::ArrowLeft, none));
+        assert!(taken_in_field(Key::Backspace, none));
+        assert!(taken_in_field(Key::Enter, none));
+        assert!(taken_in_field(Key::Z, Modifiers::COMMAND));
+        assert!(!taken_in_field(Key::Space, none), "typed by the browser");
+        assert!(
+            !taken_in_field(Key::V, Modifiers::COMMAND),
+            "pasted by the browser"
+        );
+        assert!(!taken_in_field(Key::Escape, none));
+    }
+
+    #[test]
+    fn a_replaced_selection_is_egui_typing() {
+        use accesskit::{Action, ActionData, ActionRequest, NodeId, TreeId};
+
+        let replace = |text: &str| ActionRequest {
+            action: Action::ReplaceSelectedText,
+            target_tree: TreeId::ROOT,
+            target_node: NodeId(1),
+            data: Some(ActionData::Value(text.into())),
+        };
+        assert!(matches!(&events_for(replace("é"))[..], [Event::Text(t)] if t == "é"));
+        assert!(matches!(
+            &events_for(replace(""))[..],
+            [
+                Event::Key {
+                    key: Key::Backspace,
+                    pressed: true,
+                    ..
+                },
+                Event::Key { pressed: false, .. }
+            ]
+        ));
     }
 
     #[test]
