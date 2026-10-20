@@ -57,9 +57,14 @@ pub(crate) fn describe(node: &Node, scale: f64) -> Element {
     }
     .filter(|name| !name.trim().is_empty());
     let mut text = None;
+    // An element without a role takes no name (ARIA ignores it, and its
+    // text, in the elements it holds, says it already: egui gives a text
+    // its words as text runs under it).
     if leaf && role::named_by_content(role) {
         text = name.clone();
-    } else if let Some(name) = &name {
+    } else if let Some(name) = &name
+        && role::aria(role).is_some()
+    {
         set("aria-label", name.clone());
     }
     if leaf && role::editable(role) {

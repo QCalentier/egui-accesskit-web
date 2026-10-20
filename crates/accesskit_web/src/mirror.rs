@@ -815,4 +815,22 @@ mod tests {
         m.update(field("hi", 2), 1.0);
         assert_eq!(m.dom().of(1).value, "hi");
     }
+
+    #[test]
+    fn a_text_says_its_words_once() {
+        // A text (1) holding its words in a text run (2), as egui gives
+        // them: the words are the run's text, not a label as well.
+        let mut text = node(Role::Label);
+        text.set_value("Welcome.");
+        text.set_children(vec![Id(2)]);
+        let mut run = node(Role::TextRun);
+        run.set_value("Welcome.");
+        let mut tree = update(vec![text], 0);
+        tree.nodes.push((Id(2), run));
+        let mut m = Mirror::new(Fake::default());
+        m.update(tree, 1.0);
+        assert_eq!(m.dom().attribute(1, "aria-label"), None);
+        assert_eq!(m.dom().of(1).text, None);
+        assert_eq!(m.dom().of(2).text.as_deref(), Some("Welcome."));
+    }
 }
