@@ -14,13 +14,13 @@ This repository is that adapter, and an egui plugin wiring it into any
 eframe web app in one line. It mirrors the tree into elements laid over
 the canvas, invisible but present: one element per widget, with its ARIA
 role, name, states and place. The browser's own accessibility then gives
-the app to screen readers (NVDA, JAWS, Narrator, VoiceOver, TalkBack,
-Orca) like any web page.
+the app to screen readers like any web page.
 
 > **Status: early.** Some things are missing (see
 > [What it doesn't do yet](#what-it-doesnt-do-yet)). It isn't on
-> crates.io yet; its names may change. Reports, above all from screen
-> reader users, are very welcome.
+> crates.io yet; its names may change. If something doesn't work for
+> you, please [open an issue](https://github.com/QCalentier/egui-accesskit-web/issues) (see
+> [Found a problem?](#found-a-problem)): we take care of every one.
 
 ## Use it in an eframe app
 
@@ -58,7 +58,7 @@ wasm_bindgen_futures::spawn_local(async {
 ```
 
 That's all: the plugin turns AccessKit on and does the rest. Nothing
-changes on screen, nor for mouse and touch users.
+changes on screen, nor for mouse users.
 
 **Needs** egui and eframe 0.36 (AccessKit 0.24), Rust 1.95 or later.
 Either renderer (glow or wgpu): the plugin doesn't draw.
@@ -68,12 +68,11 @@ Either renderer (glow or wgpu): the plugin doesn't draw.
 - **Every widget egui describes**, with its role and name: buttons,
   checkboxes, radio buttons, sliders (with their value and range), combo
   boxes (with the option chosen), text fields (named by their label),
-  links, images with their alternative text (`Image::alt_text`).
+  links, images with their alternative text (`Image::alt_text`). Text is
+  readable in the screen reader's browse mode, in order.
 - **Text fields as real ones**: a screen reader reads a field's text, and
-  its caret and selection as they move (by character, word, line), as in
-  any web form; typing, pasting, input methods and a phone's keyboard
-  work in it. Text is readable in the
-  screen reader's browse mode, in order.
+  its caret and selection as they move, as in any web form; typing works
+  in it, input methods too.
 - **States**: checked, selected, expanded, disabled, read-only, busy, a
   heading's level, a value's text.
 - **Structure**, when the app describes it: headings, landmarks (main,
@@ -83,7 +82,7 @@ Either renderer (glow or wgpu): the plugin doesn't draw.
   lines.
 - **Focus, both ways**: Tab, Shift+Tab and the arrows move egui's focus,
   and the screen reader follows it; a screen reader moving to a widget
-  focuses it, and activating it (Enter, Space, a double tap) clicks it.
+  focuses it, and activating it clicks it.
 - **The page's language** (`<html lang>`), when the app gives AccessKit's
   root node one.
 
@@ -103,9 +102,8 @@ screen reader reads whatever the tree holds.
   AccessKit's roles are ARIA's), its name as its text (text, buttons,
   headings) or its `aria-label`, its states as `aria-*` attributes, its
   description, and its place: positioned over the widget it stands for,
-  so a screen reader's highlight lands on the widget and touch exploration
-  finds widgets where they are drawn. They are transparent and let the
-  pointer through, so nothing changes on screen.
+  so a screen reader's highlight lands on the widget. They are
+  transparent and let the pointer through, so nothing changes on screen.
 - **Messages** go through two live regions the adapter keeps (polite and
   assertive), which works for a message that has just appeared, unlike
   a live region added with it.
@@ -121,8 +119,7 @@ screen reader reads whatever the tree holds.
   arrows, Space), as eframe does, never the browser's own shortcuts.
 - **Text fields.** A field's element is a real `<input>` (or `<textarea>`)
   holding the field's text, caret and selection. The browser types in it
-  (typing, pasting, input methods, a phone's keyboard), and each edit
-  goes back to egui as AccessKit's text selection and a replacement
+  (input methods included), and each edit goes back to egui as AccessKit's text selection and a replacement
   (which the plugin turns into egui's typing); the keys moving the caret
   or deleting go to egui, and the element follows its caret. A mouse
   user typing in a field types through eframe's own hidden `<input>`, as
@@ -179,6 +176,20 @@ wasm32-unknown-unknown`).
 
 `cargo test --workspace` tests the mirror without a browser, on a DOM in
 memory.
+
+## Found a problem?
+
+Please [open an issue](https://github.com/QCalentier/egui-accesskit-web/issues): something a screen reader misses,
+reads twice or reads wrong, a key that doesn't do what it should, a
+widget out of place, a browser or a screen reader where it doesn't work.
+We take care of every issue. What helps most:
+
+- the screen reader and the browser, with their versions (and the
+  system: Windows, macOS, Linux, a phone);
+- the widgets involved (a few lines of egui code, or the demo);
+- what you did, what you heard, and what you expected to hear.
+
+Pull requests are welcome too.
 
 ## Licence
 
