@@ -1,0 +1,3 @@
+# Text files are stored and checked out with LF line endings on every
+# platform (rustfmt writes LF; this stops git converting them on Windows).
+* text=auto eol=lf
