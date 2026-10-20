@@ -9,6 +9,7 @@ use accesskit_consumer::{Node, NodeId, Tree, TreeChangeHandler};
 
 use crate::dom::Dom;
 use crate::element::{Element, describe};
+use crate::role;
 
 /// The elements standing for a tree's nodes, kept in step with it.
 pub(crate) struct Mirror<D: Dom> {
@@ -214,6 +215,14 @@ impl<D: Dom> Mirror<D> {
         self.keys
             .get(&key)
             .is_some_and(|id| self.focus == Some(*id))
+    }
+
+    /// The name of the focused node when it is a field one types in (an
+    /// empty name if it has none).
+    pub(crate) fn focused_field(&self) -> Option<String> {
+        let focus = self.focus.filter(|id| Some(*id) != self.root)?;
+        let node = self.tree.as_ref()?.state().node_by_id(focus)?;
+        role::typed_in(node.role()).then(|| node.label().unwrap_or_default())
     }
 
     /// The element of the focused node, unless the root has the focus.

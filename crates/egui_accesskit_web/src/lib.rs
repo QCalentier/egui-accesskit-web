@@ -138,6 +138,15 @@ fn start(canvas: &web_sys::Element, ctx: &Context) -> Result<Running, JsValue> {
             ctx.request_repaint();
         }
     })?;
+    let mut adapter = adapter;
+    // eframe's text agent: the hidden <input> it types through, put right
+    // after the canvas before the app (and so this plugin) starts.
+    if let Some(input) = canvas
+        .next_element_sibling()
+        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+    {
+        adapter.set_text_input(&input)?;
+    }
     let mut keys = Vec::new();
     for (name, pressed) in [("keydown", true), ("keyup", false)] {
         let queue = queue.clone();

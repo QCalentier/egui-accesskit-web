@@ -41,10 +41,15 @@ const STYLE: &str = "
 /// focus: Tab and the arrows move it, and the elements follow; while one
 /// of them has the page's focus, keys go to it, so the toolkit should
 /// take them from [`container`](Self::container) (the egui glue does).
+/// A toolkit with a text input of its own (eframe's hidden `<input>`)
+/// gives it with [`set_text_input`](Self::set_text_input).
 pub struct Adapter {
     shared: Rc<Shared>,
     anchor: web_sys::Element,
     language: RefCell<Option<String>>,
+    /// The toolkit's own text input, and the name it was last given.
+    text_input: Option<web_sys::HtmlElement>,
+    field: RefCell<Option<String>>,
     _listeners: Vec<Closure<dyn FnMut(web_sys::Event)>>,
 }
 
@@ -114,6 +119,8 @@ impl Adapter {
             shared: shared.clone(),
             anchor: canvas.clone(),
             language: RefCell::new(None),
+            text_input: None,
+            field: RefCell::new(None),
             _listeners: Vec::new(),
         };
         adapter.listen("focusin", {
@@ -135,6 +142,26 @@ impl Adapter {
         Ok(adapter)
     }
 
+    /// Says the toolkit types through `input`, an input of its own beside
+    /// the canvas (eframe's hidden `<input>`): when the toolkit's focus is
+    /// on a field one types in, the page's focus goes there rather than to
+    /// the field's element, so the toolkit edits as it always does (with
+    /// input methods, and a phone's keyboard); `input` is named after the
+    /// field. From it, after a key, the focus follows the toolkit's as from
+    /// the canvas.
+    pub fn set_text_input(&mut self, input: &web_sys::HtmlElement) -> Result<(), JsValue> {
+        self.listen_on(input, "keydown", {
+            let shared = self.shared.clone();
+            move |_| shared.keyed.set(true)
+        })?;
+        self.listen_on(input, "pointerdown", {
+            let shared = self.shared.clone();
+            move |_| shared.keyed.set(false)
+        })?;
+        self.text_input = Some(input.clone());
+        Ok(())
+    }
+
     /// Mirrors `update` (what the toolkit built this frame) into the
     /// elements, and moves the page's focus where the toolkit's went
     /// while it is with the elements, nowhere, or on the canvas after a
@@ -144,12 +171,23 @@ impl Adapter {
         self.place();
         let scale = web_sys::window().map_or(1.0, |w| w.device_pixel_ratio());
         let moved = self.shared.mirror.borrow_mut().update(update, scale);
+        let field = self.shared.mirror.borrow().focused_field();
+        if let Some(input) = &self.text_input
+            && *self.field.borrow() != field
+        {
+            match &field {
+                Some(name) if !name.is_empty() => input.set_attribute("aria-label", name).ok(),
+                _ => input.remove_attribute("aria-label").ok(),
+            };
+            *self.field.borrow_mut() = field.clone();
+        }
         if let Some(focus) = moved
             && self.follows_focus()
         {
-            match focus {
-                Focus::To(element) => self.shared.focus(&element),
-                Focus::Root => self.shared.focus(&self.shared.container),
+            match (focus, &self.text_input) {
+                (Focus::To(_), Some(input)) if field.is_some() => self.shared.focus(input),
+                (Focus::To(element), _) => self.shared.focus(&element),
+                (Focus::Root, _) => self.shared.focus(&self.shared.container),
             }
         }
         let language = self.shared.mirror.borrow().language();
@@ -183,7 +221,8 @@ impl Adapter {
     }
 
     /// Whether the page's focus should follow the toolkit's: it is on the
-    /// elements already, nowhere, or on the canvas after a key.
+    /// elements already, nowhere, or on the canvas or the toolkit's text
+    /// input after a key.
     fn follows_focus(&self) -> bool {
         let document = self.anchor.owner_document();
         let active = document.as_ref().and_then(|d| d.active_element());
@@ -193,7 +232,12 @@ impl Adapter {
             Some(active) => {
                 body.is_some_and(|body| active == *body.unchecked_ref::<web_sys::Element>())
                     || self.shared.container.contains(Some(&active))
-                    || (active == self.anchor && self.shared.keyed.get())
+                    || ((active == self.anchor
+                        || self
+                            .text_input
+                            .as_ref()
+                            .is_some_and(|input| active == **input))
+                        && self.shared.keyed.get())
             }
         }
     }

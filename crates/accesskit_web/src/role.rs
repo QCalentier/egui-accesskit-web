@@ -189,3 +189,26 @@ pub(crate) fn editable(role: Role) -> bool {
             | EditableComboBox
     )
 }
+
+/// Whether a node of `role` is a field one types in.
+pub(crate) fn typed_in(role: Role) -> bool {
+    use Role::*;
+
+    matches!(
+        role,
+        TextInput
+            | MultilineTextInput
+            | PasswordInput
+            | SearchInput
+            | EmailInput
+            | NumberInput
+            | PhoneNumberInput
+            | UrlInput
+            | DateInput
+            | DateTimeInput
+            | WeekInput
+            | MonthInput
+            | TimeInput
+            | EditableComboBox
+    )
+}

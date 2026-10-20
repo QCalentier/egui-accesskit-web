@@ -60,6 +60,10 @@ eframe::WebRunner::new()
   so a mouse user's focus stays on the canvas (and egui's own text input
   works as before). A screen reader moving to an element focuses its
   widget; activating it (Enter, Space, a double tap) clicks it.
+- **Text fields.** On a field one types in, the page's focus goes to
+  eframe's own hidden `<input>`, named after the field, so typing works as
+  it always did (input methods, a phone's keyboard). From it too, after a
+  key, the focus follows egui's.
 - **Keys.** eframe only listens to its canvas: while an element has the
   focus, the plugin hands its keys to egui itself (and keeps from the
   browser those egui uses, as eframe does: Tab, the arrows, Space; never
@@ -86,9 +90,9 @@ protocol reads the page's accessibility tree
 
 ## Not yet
 
-- **Text fields** are a `div` with the textbox role: named, and typing
-  works (keys go to egui), but a screen reader can't move a caret in it,
-  and a phone's keyboard doesn't open from it. A real `<input>` is next.
+- **Text fields** are named and typed in, but a screen reader can't read
+  what is in them nor move a caret through it: eframe's hidden `<input>`
+  stays empty. Mirroring the field's text and caret into it is next.
 - **egui's own widgets** say what egui says: `ui.heading()` is text, not a
   heading (no AccessKit role for it); a collapsing header doesn't say
   whether it is open. Toolkits built on egui can say more (SmartBridge's
