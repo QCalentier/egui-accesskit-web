@@ -69,7 +69,12 @@ impl TreeChangeHandler for Changes {
         self.updated.push(new.id());
     }
 
-    fn focus_moved(&mut self, _old: Option<&Node>, _new: Option<&Node>) {}
+    fn focus_moved(&mut self, old: Option<&Node>, new: Option<&Node>) {
+        // Described again: a widget's active item is focusable while it is
+        // the one (its element takes the focus), not after.
+        self.updated.extend(old.map(Node::id));
+        self.updated.extend(new.map(Node::id));
+    }
 
     fn node_removed(&mut self, node: &Node) {
         self.removed.push(node.id());
@@ -235,7 +240,11 @@ impl<D: Dom> Mirror<D> {
             self.dom.announce(&text, assertive);
         }
 
-        let focus = state.focus_id();
+        // A widget keeping the focus while its items change (a tree, a
+        // list) names the item as its active descendant: the item's
+        // element takes the page's focus, as AccessKit's other adapters
+        // move theirs.
+        let focus = state.focus().map(|node| node.id());
         if focus == self.focus {
             return None;
         }
@@ -693,6 +702,49 @@ mod tests {
             m.update(update(vec![button("Save"), button("Quit")], 2), 1.0),
             None
         );
+    }
+
+    #[test]
+    fn a_widgets_active_item_takes_the_focus() {
+        // A tree (1) keeping the focus, its items (2, 3) moved through with
+        // the arrows: the item named active is focused.
+        let tree = |active: u64| {
+            let mut root = node(Role::Window);
+            root.set_children(vec![Id(1)]);
+            let mut tree = node(Role::Tree);
+            tree.set_children(vec![Id(2), Id(3)]);
+            tree.set_active_descendant(Id(active));
+            let item = |name: &str| {
+                let mut item = node(Role::TreeItem);
+                item.set_label(name);
+                item
+            };
+            TreeUpdate {
+                nodes: vec![
+                    (Id(0), root),
+                    (Id(1), tree),
+                    (Id(2), item("Ports")),
+                    (Id(3), item("Ships")),
+                ],
+                tree: Some(TreeData::new(Id(0))),
+                tree_id: TreeId::ROOT,
+                focus: Id(1),
+            }
+        };
+        let mut m = Mirror::new(Fake::default());
+        let Some(Focus::To(element)) = m.update(tree(3), 1.0) else {
+            panic!("the item should be focused")
+        };
+        assert_eq!(m.target(element).map(|(id, _)| id), Some(Id(3)));
+        // Focusable while active (a script can focus it), and only then.
+        assert_eq!(m.dom().attribute(3, "tabindex"), Some("-1"));
+        assert_eq!(m.dom().attribute(2, "tabindex"), None);
+        let Some(Focus::To(element)) = m.update(tree(2), 1.0) else {
+            panic!("the focus should follow the active item")
+        };
+        assert_eq!(m.target(element).map(|(id, _)| id), Some(Id(2)));
+        assert_eq!(m.dom().attribute(2, "tabindex"), Some("-1"));
+        assert_eq!(m.dom().attribute(3, "tabindex"), None);
     }
 
     #[test]

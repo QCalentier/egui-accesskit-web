@@ -177,8 +177,9 @@ pub(crate) fn describe(node: &Node, scale: f64) -> Element {
     };
 
     // Focusable by script and by screen readers, not by Tab: the toolkit
-    // moves its focus itself, and the element follows it.
-    if node.data().supports_action(Action::Focus) {
+    // moves its focus itself, and the element follows it; a widget's
+    // active item too (focused through the widget), while it is.
+    if node.data().supports_action(Action::Focus) || node.is_focused() {
         set("tabindex", "-1".to_owned());
     }
 
