@@ -170,6 +170,11 @@ pub(crate) fn describe(node: &Node, scale: f64) -> Element {
     if role == Role::Log && live == Live::Assertive {
         set("aria-live", "assertive".to_owned());
     }
+    // Kept quiet inside a live region (a log's line still growing, or one
+    // scrolled into view): the browser says nothing of it.
+    if node.data().live() == Some(Live::Off) {
+        set("aria-live", "off".to_owned());
+    }
     let announce = match live {
         Live::Off => None,
         _ if role == Role::Log => None,

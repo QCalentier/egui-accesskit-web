@@ -555,6 +555,108 @@ mod tests {
         button
     }
 
+    /// What following a big screen costs the mirror itself, its DOM in
+    /// memory (a page adds the browser's work on the elements it writes):
+    /// 5,000 nodes (50 groups of 99 texts and buttons), made, then given
+    /// again unchanged (egui gives the whole tree each frame), with one
+    /// text changed, and all moved (a scroll). Release:
+    /// `cargo test -p accesskit_web --release -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "a measure"]
+    fn measure_5000_nodes() {
+        use std::time::{Duration, Instant};
+
+        let tree = |text: &str, dy: f64| {
+            let mut root = node(Role::Window);
+            root.set_bounds(Rect::new(0.0, 0.0, 1280.0, 800.0));
+            let mut nodes = Vec::with_capacity(5_000);
+            let mut groups = Vec::new();
+            for g in 0..50u64 {
+                let group_id = Id(1 + g * 100);
+                groups.push(group_id);
+                let mut group = node(Role::Group);
+                group.set_label(format!("Group {g}"));
+                let children: Vec<Id> = (1..100).map(|i| Id(group_id.0 + i)).collect();
+                group.set_children(children.clone());
+                nodes.push((group_id, group));
+                for (i, id) in children.into_iter().enumerate() {
+                    let y = (g as f64 * 99.0 + i as f64) * 24.0 + dy;
+                    let mut item = if i % 2 == 0 {
+                        let mut label = node(Role::Label);
+                        if g == 0 && i == 0 {
+                            label.set_value(text);
+                        } else {
+                            label.set_value(format!("Line {g}.{i}"));
+                        }
+                        label
+                    } else {
+                        let mut button = node(Role::Button);
+                        button.set_label(format!("Open {g}.{i}"));
+                        button.add_action(Action::Focus);
+                        button.add_action(Action::Click);
+                        button
+                    };
+                    item.set_bounds(Rect::new(20.0, y, 400.0, y + 20.0));
+                    nodes.push((id, item));
+                }
+            }
+            root.set_children(groups);
+            nodes.insert(0, (Id(0), root));
+            TreeUpdate {
+                nodes,
+                tree: Some(TreeData::new(Id(0))),
+                tree_id: TreeId::ROOT,
+                focus: Id(0),
+            }
+        };
+        let median = |mut times: Vec<Duration>| {
+            times.sort();
+            times[times.len() / 2]
+        };
+        let mut m = Mirror::new(Fake::default());
+        let first = tree("Hello", 0.0);
+        assert_eq!(first.nodes.len(), 5_001);
+        let started = Instant::now();
+        m.update(first, 1.0);
+        let made = started.elapsed();
+        let writes = m.dom().writes;
+
+        let mut same = Vec::new();
+        let mut changed = Vec::new();
+        let mut moved = Vec::new();
+        for round in 0..20 {
+            let next = tree("Hello", 0.0);
+            let started = Instant::now();
+            m.update(next, 1.0);
+            same.push(started.elapsed());
+
+            let next = tree(
+                if round % 2 == 0 {
+                    "Hello there"
+                } else {
+                    "Hello"
+                },
+                0.0,
+            );
+            let started = Instant::now();
+            m.update(next, 1.0);
+            changed.push(started.elapsed());
+
+            let next = tree("Hello", -(round as f64 + 1.0));
+            let started = Instant::now();
+            m.update(next, 1.0);
+            moved.push(started.elapsed());
+            // Back where the next round starts.
+            m.update(tree("Hello", 0.0), 1.0);
+        }
+        println!(
+            "5,000 nodes: made {made:.2?} ({writes} writes); then, median of 20: unchanged {:.2?}, one text changed {:.2?}, all moved {:.2?}",
+            median(same),
+            median(changed),
+            median(moved)
+        );
+    }
+
     #[test]
     fn nodes_become_elements_saying_what_they_are() {
         let mut heading = node(Role::Heading);
@@ -808,6 +910,14 @@ mod tests {
         assert_eq!(m.dom().attribute(1, "role"), Some("log"));
         assert_eq!(m.dom().of(1).children.len(), 2);
         assert_eq!(m.dom().of(11).text.as_deref(), Some("A dark room."));
+        assert_eq!(m.dom().attribute(11, "aria-live"), None);
+
+        // A line kept quiet (still growing): the log says nothing of it.
+        let mut quiet = log(&["> look", "A dark"]);
+        quiet.nodes.last_mut().unwrap().1.set_live(Live::Off);
+        m.update(quiet, 1.0);
+        assert_eq!(m.dom().attribute(11, "aria-live"), Some("off"));
+        assert!(m.dom().announced.is_empty());
     }
 
     /// A text field (1) holding "hello" in one text run (2), its caret
