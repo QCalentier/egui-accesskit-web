@@ -83,6 +83,14 @@ ui.ctx().accesskit_node_builder(title.id, |node| {
 
 Whatever your app puts in the tree, screen readers get.
 
+A node's `author_id` becomes its element's `data-testid`, so tools outside
+the page (Playwright, Testing Library) can find a widget by a name that
+doesn't change with the language:
+
+```rust
+ui.ctx().accesskit_node_builder(save.id, |node| node.set_author_id("toolbar/save"));
+```
+
 ## Try the demo
 
 ```sh

@@ -14,7 +14,8 @@ pub(crate) struct Element {
     pub tag: Tag,
     /// A field's text.
     pub value: Option<String>,
-    /// `role` and `aria-*` attributes, `tabindex`, sorted by name.
+    /// `role`, `aria-*` and `data-testid` attributes, `tabindex`, sorted by
+    /// name.
     pub attributes: Vec<(&'static str, String)>,
     /// Its text: a leaf's name when its role is named by its content, the
     /// value of a field.
@@ -186,6 +187,12 @@ pub(crate) fn describe(node: &Node, scale: f64) -> Element {
     // active item too (focused through the widget), while it is.
     if node.data().supports_action(Action::Focus) || node.is_focused() {
         set("tabindex", "-1".to_owned());
+    }
+
+    // What the application calls it, the same in any language: what tools
+    // outside the page look up (Playwright, Testing Library).
+    if let Some(id) = node.author_id() {
+        set("data-testid", id.to_owned());
     }
 
     attributes.sort_by_key(|(name, _)| *name);

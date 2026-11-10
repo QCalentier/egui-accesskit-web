@@ -658,6 +658,27 @@ mod tests {
     }
 
     #[test]
+    fn what_the_application_calls_a_node_is_found_from_outside() {
+        let mut save = button("Enregistrer");
+        save.set_author_id("toolbar/save");
+        let mut m = Mirror::new(Fake::default());
+        m.update(update(vec![save, button("Annuler")], 0), 1.0);
+        assert_eq!(m.dom().attribute(1, "data-testid"), Some("toolbar/save"));
+        assert_eq!(m.dom().attribute(2, "data-testid"), None);
+
+        // Called something else, or no more.
+        let mut save = button("Enregistrer");
+        save.set_author_id("bar/save");
+        m.update(update(vec![save, button("Annuler")], 0), 1.0);
+        assert_eq!(m.dom().attribute(1, "data-testid"), Some("bar/save"));
+        m.update(
+            update(vec![button("Enregistrer"), button("Annuler")], 0),
+            1.0,
+        );
+        assert_eq!(m.dom().attribute(1, "data-testid"), None);
+    }
+
+    #[test]
     fn nodes_become_elements_saying_what_they_are() {
         let mut heading = node(Role::Heading);
         heading.set_label("Settings");
