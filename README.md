@@ -83,6 +83,20 @@ ui.ctx().accesskit_node_builder(title.id, |node| {
 
 Whatever your app puts in the tree, screen readers get.
 
+A link that says where it goes becomes a real `<a href>`, so screen
+readers list it with its address, and `aria-current` marks the page
+shown. egui 0.36's `Hyperlink` doesn't put its address in the tree; give
+it yourself:
+
+```rust
+let link = ui.hyperlink_to("Source", "https://github.com/QCalentier/egui-accesskit-web");
+ui.ctx().accesskit_node_builder(link.id, |node| {
+    node.set_url("https://github.com/QCalentier/egui-accesskit-web");
+});
+```
+
+Your app still opens it: the browser never follows the element itself.
+
 A node's `author_id` becomes its element's `data-testid`, so tools outside
 the page (Playwright, Testing Library) can find a widget by a name that
 doesn't change with the language:
@@ -111,7 +125,8 @@ changed: about 0.3 ms a frame for a page of a hundred widgets. Each
 widget becomes an element with its ARIA role, name and state, placed
 over the widget and transparent to the pointer. The page's focus follows
 egui's, and keys pressed there reach egui; a text field is a real
-`<input>`, kept in step with egui's text and caret.
+`<input>`, kept in step with egui's text and caret, and a link with its
+address a real `<a href>`.
 
 | Crate | What it is |
 |---|---|

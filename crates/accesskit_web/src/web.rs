@@ -163,6 +163,19 @@ impl Adapter {
             let shared = shared.clone();
             move |event| shared.clicked(&event)
         })?;
+        // Enter on a link's element is the toolkit's key, as on any other
+        // element: the browser would click the link too, opening it twice.
+        adapter.listen("keydown", {
+            let shared = shared.clone();
+            move |event| {
+                let enter = event
+                    .dyn_ref::<web_sys::KeyboardEvent>()
+                    .is_some_and(|key| key.key() == "Enter");
+                if enter && shared.on_link(&event) {
+                    event.prevent_default();
+                }
+            }
+        })?;
         for event in ["input", "compositionend"] {
             adapter.listen(event, {
                 let shared = shared.clone();
@@ -402,8 +415,12 @@ impl Shared {
     }
 
     /// A screen reader activated an element: its node (or the nearest
-    /// ancestor taking clicks) is clicked.
+    /// ancestor taking clicks) is clicked. The browser never follows a
+    /// link itself: the toolkit opens it, as its link does on a click.
     fn clicked(&self, event: &web_sys::Event) {
+        if self.on_link(event) {
+            event.prevent_default();
+        }
         let Some(key) = event
             .target()
             .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
@@ -416,6 +433,16 @@ impl Shared {
             event.prevent_default();
             self.act(Action::Click, node, tree);
         }
+    }
+
+    /// Whether `event` happened on one of the adapter's link elements, or
+    /// inside one.
+    fn on_link(&self, event: &web_sys::Event) -> bool {
+        event
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .and_then(|t| t.closest("a[href]").ok().flatten())
+            .is_some_and(|link| self.container.contains(Some(&link)))
     }
 
     fn act(&self, action: Action, target_node: accesskit::NodeId, target_tree: accesskit::TreeId) {
@@ -625,6 +652,7 @@ impl Dom for PageDom {
             Tag::Div => "div",
             Tag::Input | Tag::Password => "input",
             Tag::TextArea => "textarea",
+            Tag::Link => "a",
         };
         let element: web_sys::HtmlElement = self
             .document

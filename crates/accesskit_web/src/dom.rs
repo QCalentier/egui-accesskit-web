@@ -2,9 +2,11 @@
 
 use accesskit::Rect;
 
-/// What kind of element stands for a node: a `div`, or for a field one
-/// types in a real one, which the browser edits (caret, selection, input
-/// methods, a phone's keyboard) and screen readers read as a field.
+/// What kind of element stands for a node: a `div`; for a field one types
+/// in, a real one, which the browser edits (caret, selection, input
+/// methods, a phone's keyboard) and screen readers read as a field; for a
+/// link with an address, a real one, which screen readers list with where
+/// it goes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Tag {
     #[default]
@@ -15,12 +17,15 @@ pub(crate) enum Tag {
     Password,
     /// `<textarea>`: several lines.
     TextArea,
+    /// `<a href>`: the toolkit still opens it (the adapter keeps the
+    /// browser from following it itself).
+    Link,
 }
 
 impl Tag {
     /// Whether it is a field one types in.
     pub(crate) fn is_field(self) -> bool {
-        self != Tag::Div
+        matches!(self, Tag::Input | Tag::Password | Tag::TextArea)
     }
 }
 

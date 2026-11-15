@@ -76,7 +76,12 @@ impl Demo {
         });
         ui.collapsing("More", |ui| {
             ui.label("Folded away until opened.");
-            ui.hyperlink_to("egui", "https://github.com/emilk/egui");
+            // A link that says where it goes, which screen readers list
+            // (egui's doesn't put its address in the tree).
+            let url = "https://github.com/emilk/egui";
+            let link = ui.hyperlink_to("egui", url);
+            ui.ctx()
+                .accesskit_node_builder(link.id, |node| node.set_url(url));
         });
         ui.separator();
         ui.label("What happened:");

@@ -1016,4 +1016,80 @@ mod tests {
         assert_eq!(m.dom().of(1).text, None);
         assert_eq!(m.dom().of(2).text.as_deref(), Some("Welcome."));
     }
+
+    /// A link (1) named `name`, going to `url` if any.
+    fn link(name: &str, url: Option<&str>) -> NodeData {
+        let mut link = node(Role::Link);
+        link.set_label(name);
+        link.add_action(Action::Click);
+        if let Some(url) = url {
+            link.set_url(url);
+        }
+        link
+    }
+
+    #[test]
+    fn a_link_with_its_address_is_a_real_one() {
+        use accesskit::AriaCurrent;
+
+        let mut m = Mirror::new(Fake::default());
+        let mut projects = link("Projects", Some("/projects"));
+        projects.set_aria_current(AriaCurrent::Page);
+        m.update(update(vec![projects], 0), 1.0);
+        let dom = m.dom();
+        assert_eq!(dom.of(1).tag, Tag::Link);
+        assert_eq!(dom.attribute(1, "href"), Some("/projects"));
+        assert_eq!(dom.attribute(1, "role"), None, "a link says it itself");
+        assert_eq!(dom.of(1).text.as_deref(), Some("Projects"));
+        assert_eq!(dom.attribute(1, "aria-current"), Some("page"));
+        assert_eq!(
+            dom.attribute(1, "tabindex"),
+            Some("-1"),
+            "out of the Tab order, though it doesn't take the focus"
+        );
+
+        // Another page shown: no longer the current one.
+        let mut projects = link("Projects", Some("/projects"));
+        projects.set_aria_current(AriaCurrent::False);
+        m.update(update(vec![projects], 0), 1.0);
+        assert_eq!(m.dom().attribute(1, "aria-current"), None);
+
+        // Its address gone: a link still, with nowhere to say.
+        m.update(update(vec![link("Projects", None)], 0), 1.0);
+        let dom = m.dom();
+        assert_eq!(dom.of(1).tag, Tag::Div);
+        assert_eq!(dom.attribute(1, "role"), Some("link"));
+        assert_eq!(dom.attribute(1, "href"), None);
+    }
+
+    #[test]
+    fn a_link_to_a_script_or_nowhere_has_no_address() {
+        let mut m = Mirror::new(Fake::default());
+        let links = vec![
+            link("Run", Some(" JavaScript:alert(1)")),
+            link("Empty", Some("  ")),
+            link("Mail", Some("mailto:someone@example.org")),
+        ];
+        m.update(update(links, 0), 1.0);
+        let dom = m.dom();
+        for id in [1, 2] {
+            assert_eq!(dom.of(id).tag, Tag::Div);
+            assert_eq!(dom.attribute(id, "href"), None);
+            assert_eq!(dom.attribute(id, "role"), Some("link"));
+        }
+        assert_eq!(dom.of(3).tag, Tag::Link);
+        assert_eq!(dom.attribute(3, "href"), Some("mailto:someone@example.org"));
+    }
+
+    #[test]
+    fn any_node_says_it_is_the_current_one() {
+        use accesskit::AriaCurrent;
+
+        let mut step = node(Role::ListItem);
+        step.set_label("Payment");
+        step.set_aria_current(AriaCurrent::Step);
+        let mut m = Mirror::new(Fake::default());
+        m.update(update(vec![step], 0), 1.0);
+        assert_eq!(m.dom().attribute(1, "aria-current"), Some("step"));
+    }
 }

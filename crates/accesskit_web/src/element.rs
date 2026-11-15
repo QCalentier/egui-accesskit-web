@@ -1,7 +1,7 @@
 //! What one node's element says: its role, name, states and place, worked
 //! out from the node alone, so the mirror only compares and applies.
 
-use accesskit::{Action, Live, Orientation, Rect, Role, Toggled};
+use accesskit::{Action, AriaCurrent, Live, Orientation, Rect, Role, Toggled};
 use accesskit_consumer::Node;
 
 use crate::dom::Tag;
@@ -41,12 +41,17 @@ pub(crate) fn describe(node: &Node, scale: f64) -> Element {
     let mut attributes = Vec::new();
     let mut set = |name: &'static str, value: String| attributes.push((name, value));
 
-    // A field's own element says it is a field; a search field or an
-    // editable list says what it is too.
+    // A field's own element says it is a field, and a link's that it is a
+    // link; a search field or an editable list says what it is too.
     if let Some(aria) = role::aria(role)
-        && (!tag.is_field() || matches!(role, Role::SearchInput | Role::EditableComboBox))
+        && (tag == Tag::Div || matches!(role, Role::SearchInput | Role::EditableComboBox))
     {
         set("role", aria.to_owned());
+    }
+    if tag == Tag::Link
+        && let Some(address) = address(node)
+    {
+        set("href", address.to_owned());
     }
 
     // The name: as content when the role takes it so (text, a button, a
@@ -134,6 +139,19 @@ pub(crate) fn describe(node: &Node, scale: f64) -> Element {
     if let Some(expanded) = node.data().is_expanded() {
         set("aria-expanded", expanded.to_string());
     }
+    // The page, step or place shown, among links or items to them.
+    let current = match node.aria_current() {
+        None | Some(AriaCurrent::False) => None,
+        Some(AriaCurrent::True) => Some("true"),
+        Some(AriaCurrent::Page) => Some("page"),
+        Some(AriaCurrent::Step) => Some("step"),
+        Some(AriaCurrent::Location) => Some("location"),
+        Some(AriaCurrent::Date) => Some("date"),
+        Some(AriaCurrent::Time) => Some("time"),
+    };
+    if let Some(current) = current {
+        set("aria-current", current.to_owned());
+    }
     if let Some(level) = node.level() {
         set("aria-level", level.to_string());
     }
@@ -184,8 +202,9 @@ pub(crate) fn describe(node: &Node, scale: f64) -> Element {
 
     // Focusable by script and by screen readers, not by Tab: the toolkit
     // moves its focus itself, and the element follows it; a widget's
-    // active item too (focused through the widget), while it is.
-    if node.data().supports_action(Action::Focus) || node.is_focused() {
+    // active item too (focused through the widget), while it is. A link
+    // would take Tab by itself.
+    if node.data().supports_action(Action::Focus) || node.is_focused() || tag == Tag::Link {
         set("tabindex", "-1".to_owned());
     }
 
@@ -233,8 +252,20 @@ pub(crate) fn tag(node: &Node) -> Tag {
         Role::PasswordInput => Tag::Password,
         role if role::typed_in(role) && node.is_multiline() => Tag::TextArea,
         role if role::typed_in(role) => Tag::Input,
+        Role::Link if address(node).is_some() => Tag::Link,
         _ => Tag::Div,
     }
+}
+
+/// Where a link goes, as its element's `href`: its URL, unless empty or a
+/// script (which the page would run if it followed it, and which says
+/// nothing of a place).
+fn address<'a>(node: &'a Node) -> Option<&'a str> {
+    let url = node.url()?.trim();
+    let script = url
+        .get(..11)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("javascript:"));
+    (!url.is_empty() && !script).then_some(url)
 }
 
 /// The text in a field: its text runs', or its value.
