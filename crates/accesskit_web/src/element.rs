@@ -216,11 +216,11 @@ pub(crate) fn describe(node: &Node, scale: f64) -> Element {
 
     attributes.sort_by_key(|(name, _)| *name);
     let css = |b: Rect| Rect::new(b.x0 / scale, b.y0 / scale, b.x1 / scale, b.y1 / scale);
-    let absolute = node.bounding_box().map(css);
+    let absolute = placed(node).map(css);
     let mut ancestor = node.parent();
     let origin = loop {
         match ancestor {
-            Some(a) => match a.bounding_box() {
+            Some(a) => match placed(&a) {
                 Some(b) => break css(b),
                 None => ancestor = a.parent(),
             },
@@ -244,6 +244,16 @@ pub(crate) fn describe(node: &Node, scale: f64) -> Element {
         absolute,
         announce,
     }
+}
+
+/// Where `node` is, if it says a place that is one: a toolkit may leave a
+/// node at an empty or impossible rectangle (egui 0.36 leaves a `Ui` that
+/// takes the keyboard at `Rect::NOTHING`, infinite), which no element can
+/// be given (`left: infpx` is no place: the element would have no size).
+fn placed(node: &Node) -> Option<Rect> {
+    node.bounding_box().filter(|b| {
+        [b.x0, b.y0, b.x1, b.y1].iter().all(|v| v.is_finite()) && b.x0 <= b.x1 && b.y0 <= b.y1
+    })
 }
 
 /// The kind of element standing for `node`.

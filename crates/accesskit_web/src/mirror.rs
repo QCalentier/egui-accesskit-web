@@ -804,6 +804,31 @@ mod tests {
     }
 
     #[test]
+    fn a_node_left_nowhere_is_no_element_s_place() {
+        // A toolkit may leave a node at an impossible rectangle (egui does
+        // for a `Ui` taking the keyboard): its element is placed as having
+        // none, and what it holds in the nearest ancestor that has one.
+        let mut nowhere = button("Card");
+        nowhere.set_bounds(Rect::new(
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ));
+        nowhere.set_children(vec![Id(2)]);
+        let mut tree = update(vec![nowhere], 0);
+        tree.nodes.push((Id(2), button("Open")));
+        let mut m = Mirror::new(Fake::default());
+        m.update(tree, 1.0);
+        assert_eq!(m.dom().of(1).bounds, None);
+        assert_eq!(
+            m.dom().of(2).bounds,
+            Some(Rect::new(10.0, 30.0, 110.0, 62.0)),
+            "placed in the window, the nearest that has a place"
+        );
+    }
+
+    #[test]
     fn the_focus_is_followed_and_actions_find_their_node() {
         let mut m = Mirror::new(Fake::default());
         assert_eq!(
